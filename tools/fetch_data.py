@@ -4,10 +4,10 @@
 
 사용법:
     python tools/fetch_data.py
-    python tools/fetch_data.py --key YOUR_KEY --datasets tools/datasets.json --out data/bins.json
+    python tools/fetch_data.py --key YOUR_KEY
 
 환경변수:
-    DATA_GO_KR_KEY   API 키 (--key 보다 우선)
+    DATA_GO_KR_KEY   API 키 (data.go.kr 마이페이지 > 인증키 발급현황)
 """
 
 import argparse
@@ -21,16 +21,19 @@ import urllib.parse
 from datetime import date
 
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
-ROOT_DIR = os.path.join(SCRIPT_DIR, "..")
+ROOT_DIR   = os.path.join(SCRIPT_DIR, "..")
 DATASETS_FILE = os.path.join(SCRIPT_DIR, "datasets.json")
-OUT_FILE = os.path.join(ROOT_DIR, "data", "bins.json")
+OUT_FILE      = os.path.join(ROOT_DIR, "data", "bins.json")
 
-LAT_KEYS  = {"위도", "lat", "latitude", "y좌표", "y_coord", "wgs84위도", "y", "위도(wgs84)"}
-LNG_KEYS  = {"경도", "lng", "longitude", "x좌표", "x_coord", "wgs84경도", "x", "경도(wgs84)"}
-ADDR_KEYS = {"주소", "address", "소재지주소", "소재지도로명주소", "소재지지번주소", "설치장소주소", "지번주소", "도로명주소", "소재지"}
-NAME_KEYS = {"명칭", "name", "설치장소", "수거함명", "설치위치", "위치명", "장소명"}
-GU_KEYS   = {"구", "gu", "자치구", "시군구", "시군구명", "구명"}
-DONG_KEYS = {"동", "dong", "행정동", "읍면동", "읍면동명", "동명"}
+# ── 컬럼명 매핑 ────────────────────────────────────────────────────────────
+LAT_KEYS  = {"위도", "lat", "latitude", "y좌표", "y_coord", "wgs84위도", "y"}
+LNG_KEYS  = {"경도", "lng", "lot", "longitude", "x좌표", "x_coord", "wgs84경도", "x"}
+ADDR_KEYS = {"lctn_road_nm_addr", "lctn_lotno_addr", "소재지도로명주소", "소재지지번주소",
+             "소재지주소", "address", "설치장소주소", "지번주소", "도로명주소", "소재지"}
+NAME_KEYS = {"instl_plc_nm", "설치장소명", "명칭", "name", "설치장소", "수거함명",
+             "설치위치", "위치명", "장소명", "dtl_pstn"}
+GU_KEYS   = {"sgg_nm", "시군구명", "구", "gu", "자치구", "시군구", "구명"}
+DONG_KEYS = {"dong", "행정동", "읍면동", "읍면동명", "동명", "동"}
 
 
 def nk(s):
@@ -41,7 +44,13 @@ def find_col(keys, candidates):
     for cand in candidates:
         cn = nk(cand)
         for k in keys:
-            if nk(k) == cn or nk(k).startswith(cn):
+            if nk(k) == cn:
+                return k
+    # 부분 매치 (접두어)
+    for cand in candidates:
+        cn = nk(cand)
+        for k in keys:
+            if nk(k).startswith(cn) or cn.startswith(nk(k)):
                 return k
     return None
 
@@ -59,10 +68,9 @@ def valid_coords(lat, lng):
 
 def rows_to_bins(rows, start_idx=1):
     bins = []
-    idx = start_idx
+    idx  = start_idx
     for row in rows:
-        keys = list(row.keys())
-
+        keys  = list(row.keys())
         lat_k = find_col(keys, LAT_KEYS)
         lng_k = find_col(keys, LNG_KEYS)
         if not lat_k or not lng_k:
@@ -100,30 +108,75 @@ def rows_to_bins(rows, start_idx=1):
     return bins, idx
 
 
-# ── odcloud REST API ────────────────────────────────────────────────────────
+# ── api.data.go.kr 표준 API (전국의류수거함표준데이터 등) ──────────────────
 
-def odcloud_url(dataset_id, service_key, page, per_page):
-    # dataset_id가 'full/path/v1/uddi:xxx' 형태면 그대로, 숫자만이면 추측
+def fetch_standard_api(endpoint, service_key):
+    """pageNo / numOfRows / type=JSON 방식의 표준 API"""
+    NUM_ROWS = 1000
+    page_no  = 1
+    all_rows = []
+
+    while True:
+        params = urllib.parse.urlencode({
+            "serviceKey": service_key,
+            "pageNo":     page_no,
+            "numOfRows":  NUM_ROWS,
+            "type":       "JSON",
+        })
+        url = f"{endpoint}?{params}"
+
+        req = urllib.request.Request(url, headers={"Accept": "application/json"})
+        with urllib.request.urlopen(req, timeout=30) as resp:
+            body = json.loads(resp.read().decode("utf-8"))
+
+        # 응답 구조: response.body.items.item  또는  response.body.items (리스트)
+        resp_body = body.get("response", body).get("body", {})
+        items     = resp_body.get("items", {})
+        if isinstance(items, dict):
+            rows = items.get("item", [])
+        elif isinstance(items, list):
+            rows = items
+        else:
+            rows = []
+
+        if not rows:
+            break
+
+        # 단일 결과일 때 dict로 오는 경우 처리
+        if isinstance(rows, dict):
+            rows = [rows]
+
+        all_rows.extend(rows)
+
+        total = int(resp_body.get("totalCount", 0))
+        if len(all_rows) >= total:
+            break
+        page_no += 1
+
+    return all_rows
+
+
+# ── api.odcloud.kr REST API ───────────────────────────────────────────────
+
+def fetch_odcloud(dataset_id, service_key):
+    PER_PAGE = 1000
+    page     = 1
+    all_rows = []
+
     if "/v1/" in dataset_id:
         path = dataset_id
     else:
         path = f"{dataset_id}/v1/uddi:{dataset_id}"
-    params = urllib.parse.urlencode({
-        "serviceKey": service_key,
-        "page":       page,
-        "perPage":    per_page,
-        "returnType": "JSON",
-    })
-    return f"https://api.odcloud.kr/api/{path}?{params}"
-
-
-def fetch_odcloud(dataset_id, service_key):
-    PER_PAGE = 1000
-    page = 1
-    all_rows = []
 
     while True:
-        url = odcloud_url(dataset_id, service_key, page, PER_PAGE)
+        params = urllib.parse.urlencode({
+            "serviceKey": service_key,
+            "page":       page,
+            "perPage":    PER_PAGE,
+            "returnType": "JSON",
+        })
+        url = f"https://api.odcloud.kr/api/{path}?{params}"
+
         with urllib.request.urlopen(url, timeout=30) as resp:
             body = json.loads(resp.read().decode("utf-8"))
 
@@ -132,20 +185,19 @@ def fetch_odcloud(dataset_id, service_key):
             break
         all_rows.extend(rows)
 
-        total = body.get("totalCount") or body.get("matchCount") or 0
-        if len(all_rows) >= int(total):
+        total = int(body.get("totalCount") or body.get("matchCount") or 0)
+        if len(all_rows) >= total:
             break
         page += 1
 
     return all_rows
 
 
-# ── CSV URL 직접 다운로드 ────────────────────────────────────────────────────
+# ── CSV URL 직접 다운로드 ─────────────────────────────────────────────────
 
 def fetch_csv_url(url):
     with urllib.request.urlopen(url, timeout=30) as resp:
         raw = resp.read()
-
     for enc in ("utf-8-sig", "cp949", "utf-8"):
         try:
             text = raw.decode(enc)
@@ -154,12 +206,10 @@ def fetch_csv_url(url):
             continue
     else:
         raise ValueError("인코딩 감지 실패")
-
-    reader = csv.DictReader(io.StringIO(text))
-    return list(reader)
+    return list(csv.DictReader(io.StringIO(text)))
 
 
-# ── 메인 ────────────────────────────────────────────────────────────────────
+# ── 메인 ─────────────────────────────────────────────────────────────────
 
 def main():
     parser = argparse.ArgumentParser(description="data.go.kr 의류수거함 데이터 자동 갱신")
@@ -176,15 +226,15 @@ def main():
         print("오류: datasets.json에 sources가 없습니다.", file=sys.stderr)
         sys.exit(1)
 
-    # odcloud 방식은 API 키 필요
-    needs_key = any(s.get("type", "odcloud") == "odcloud" for s in sources)
+    needs_key = any(s.get("type", "odcloud") in ("odcloud", "standard_api") for s in sources)
     if needs_key and not args.key:
-        print("오류: DATA_GO_KR_KEY 환경변수 또는 --key 옵션으로 API 키를 지정하세요.", file=sys.stderr)
-        print("       data.go.kr 마이페이지 > 인증키 발급현황에서 무료 발급 가능합니다.", file=sys.stderr)
+        print("오류: API 키가 없습니다.", file=sys.stderr)
+        print("  DATA_GO_KR_KEY 환경변수 또는 --key 옵션을 설정하세요.", file=sys.stderr)
+        print("  data.go.kr 마이페이지 > 인증키 발급현황 에서 무료 발급 가능합니다.", file=sys.stderr)
         sys.exit(1)
 
-    all_bins = []
-    idx = 1
+    all_bins     = []
+    idx          = 1
     source_names = []
 
     for src in sources:
@@ -193,12 +243,14 @@ def main():
         print(f"  [{src_type}] {src_name} ...", end=" ", flush=True)
 
         try:
-            if src_type == "odcloud":
+            if src_type == "standard_api":
+                rows = fetch_standard_api(src["endpoint"], args.key)
+            elif src_type == "odcloud":
                 rows = fetch_odcloud(src["dataset_id"], args.key)
             elif src_type == "csv_url":
                 rows = fetch_csv_url(src["url"])
             else:
-                print(f"알 수 없는 type: {src_type}, 건너뜀")
+                print(f"알 수 없는 type '{src_type}', 건너뜀")
                 continue
 
             bins, idx = rows_to_bins(rows, idx)
@@ -211,8 +263,8 @@ def main():
 
     if not all_bins:
         print("\n경고: 수집된 데이터가 없습니다.", file=sys.stderr)
-        print("  - datasets.json의 dataset_id가 정확한지 확인하세요.", file=sys.stderr)
-        print("  - data.go.kr에서 해당 데이터셋의 활용신청이 승인되었는지 확인하세요.", file=sys.stderr)
+        print("  - API 키가 올바른지 확인하세요.", file=sys.stderr)
+        print("  - data.go.kr에서 해당 데이터셋 활용신청을 완료했는지 확인하세요.", file=sys.stderr)
         sys.exit(1)
 
     result = {
@@ -226,7 +278,7 @@ def main():
     with open(out_path, "w", encoding="utf-8") as f:
         json.dump(result, f, ensure_ascii=False, indent=2)
 
-    print(f"\n완료: 총 {len(all_bins)}개 수거함 데이터 → {out_path}")
+    print(f"\n완료: 총 {len(all_bins)}개 수거함 → {out_path}")
 
 
 if __name__ == "__main__":
