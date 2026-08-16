@@ -24,6 +24,24 @@ SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 ROOT_DIR   = os.path.join(SCRIPT_DIR, "..")
 DATASETS_FILE = os.path.join(SCRIPT_DIR, "datasets.json")
 OUT_FILE      = os.path.join(ROOT_DIR, "data", "bins.json")
+ENV_FILE      = os.path.join(ROOT_DIR, ".env")
+
+
+def load_dotenv(path):
+    """.env 파일의 KEY=VALUE 줄을 환경변수로 로드 (이미 설정된 값은 덮어쓰지 않음)"""
+    if not os.path.isfile(path):
+        return
+    with open(path, encoding="utf-8") as f:
+        for line in f:
+            line = line.strip()
+            if not line or line.startswith("#") or "=" not in line:
+                continue
+            key, _, value = line.partition("=")
+            key, value = key.strip(), value.strip().strip('"').strip("'")
+            os.environ.setdefault(key, value)
+
+
+load_dotenv(ENV_FILE)
 
 # ── 컬럼명 매핑 ────────────────────────────────────────────────────────────
 LAT_KEYS  = {"위도", "lat", "latitude", "y좌표", "y_coord", "wgs84위도", "y"}
