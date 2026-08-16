@@ -4,7 +4,8 @@
     "API 키: data.go.kr 회원가입 → 마이페이지 → 인증키 발급현황 → 일반 인증키",
     "type 'standard_api': api.data.go.kr 표준 형식 (pageNo/numOfRows/type 파라미터)",
     "type 'odcloud':      api.odcloud.kr 형식 (page/perPage/returnType 파라미터)",
-    "type 'csv_url':      CSV 파일 직접 URL 다운로드"
+    "type 'csv_url':      CSV 파일 직접 URL 다운로드",
+    "type 'data_go_kr_file': data.go.kr 개별 파일데이터(fileData.do) 자동 다운로드. serviceKey 불필요. 'id'는 데이터셋 번호(URL의 /data/{id}/fileData.do). 'region'은 CSV에 구/시 컬럼이 없을 때 쓰는 대체값."
   ],
   "sources": [
     {
@@ -12,7 +13,25 @@
       "name": "전국 의류수거함 표준데이터",
       "endpoint": "https://api.data.go.kr/openapi/tn_pubr_public_clothing_collect_bins_api",
       "dataset_id": "15139214",
-      "note": "전국 지자체 의류수거함 통합 데이터. data.go.kr에서 자동승인."
-    }
+      "note": "전국 지자체 의류수거함 통합 데이터. data.go.kr에서 자동승인. 다만 실제로는 참여 지자체만 포함되어 있어 전국을 다 담고 있지 않음(서울 상당수 구, 성남/수원/고양 등 경기 대도시 다수 누락) - 아래 개별 지자체 파일데이터로 일부 보완."
+    },
+    {"type": "data_go_kr_file", "name": "서울 동작구",   "id": "15068021", "region": "동작구"},
+    {"type": "data_go_kr_file", "name": "서울 관악구",   "id": "15076398", "region": "관악구"},
+    {"type": "data_go_kr_file", "name": "서울 광진구",   "id": "15109594", "region": "광진구"},
+    {"type": "data_go_kr_file", "name": "서울 영등포구", "id": "15106473", "region": "영등포구"},
+    {"type": "data_go_kr_file", "name": "서울 종로구",   "id": "15104622", "region": "종로구"},
+    {"type": "data_go_kr_file", "name": "서울 양천구",   "id": "15105196", "region": "양천구"},
+    {"type": "data_go_kr_file", "name": "서울 강서구",   "id": "15127065", "region": "강서구"},
+    {"type": "data_go_kr_file", "name": "서울 송파구",   "id": "15127100", "region": "송파구"},
+    {"type": "data_go_kr_file", "name": "서울 성동구",   "id": "15126958", "region": "성동구"},
+    {"type": "data_go_kr_file", "name": "서울 강북구",   "id": "15138051", "region": "강북구"},
+    {"type": "data_go_kr_file", "name": "서울 강동구",   "id": "15137988", "region": "강동구"},
+    {"type": "data_go_kr_file", "name": "서울 용산구",   "id": "15149815", "region": "용산구"},
+    {"type": "data_go_kr_file", "name": "경기 고양시",   "id": "15127158", "region": "고양시"},
+    {"type": "data_go_kr_file", "name": "경기 부천시",   "id": "15127141", "region": "부천시"},
+    {"type": "data_go_kr_file", "name": "경기 군포시",   "id": "15126999", "region": "군포시"},
+    {"type": "data_go_kr_file", "name": "경기 오산시",   "id": "15127124", "region": "오산시"},
+    {"type": "data_go_kr_file", "name": "경기 의정부시", "id": "15127238", "region": "의정부시"},
+    {"type": "data_go_kr_file", "name": "경기 의왕시",   "id": "15127113", "region": "의왕시"}
   ]
 }

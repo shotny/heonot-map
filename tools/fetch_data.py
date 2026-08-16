@@ -15,6 +15,7 @@ import csv
 import io
 import json
 import os
+import re
 import sys
 import urllib.request
 import urllib.parse
@@ -73,6 +74,15 @@ def find_col(keys, candidates):
     return None
 
 
+def extract_gu_from_address(address):
+    """구/시군 컬럼이 없는 데이터는 주소 두번째 토큰(예: '서울특별시 동작구 ...' → '동작구')에서 추출"""
+    parts = address.split()
+    if len(parts) < 2:
+        return ""
+    candidate = parts[1]
+    return candidate if candidate.endswith(("구", "시", "군")) else ""
+
+
 def parse_float(v):
     try:
         return float(str(v).strip().replace(",", ""))
@@ -84,7 +94,7 @@ def valid_coords(lat, lng):
     return lat and lng and (33.0 <= lat <= 38.9) and (124.0 <= lng <= 132.0)
 
 
-def rows_to_bins(rows, start_idx=1):
+def rows_to_bins(rows, start_idx=1, default_gu=""):
     bins = []
     idx  = start_idx
     for row in rows:
@@ -108,6 +118,9 @@ def rows_to_bins(rows, start_idx=1):
         name    = str(row.get(name_k, "")).strip() if name_k else ""
         gu      = str(row.get(gu_k,   "")).strip() if gu_k   else ""
         dong    = str(row.get(dong_k, "")).strip() if dong_k else ""
+
+        if not gu:
+            gu = extract_gu_from_address(address) or default_gu
 
         if not name:
             name = f"{gu} {dong} 의류수거함".strip() or "의류수거함"
@@ -211,6 +224,82 @@ def fetch_odcloud(dataset_id, service_key):
     return all_rows
 
 
+# ── data.go.kr 개별 파일데이터(지자체별 CSV) ────────────────────────────────
+# 표준 API(전국의류수거함표준데이터)에 없는 지자체는 data.go.kr에 개별 파일로만
+# 등록된 경우가 많다. fileData.do 페이지를 그대로 파싱해 다운로드 URL을 얻는다.
+
+FILE_DOWN_RE = re.compile(
+    r"fn_fileDataDown\('([^']*)',\s*'([^']*)',\s*'([^']*)',\s*'([^']*)',\s*'([^']*)'\)"
+)
+
+
+def fetch_data_go_kr_file(public_data_pk):
+    page_url = f"https://www.data.go.kr/data/{public_data_pk}/fileData.do"
+    req = urllib.request.Request(page_url, headers={"User-Agent": "Mozilla/5.0"})
+    with urllib.request.urlopen(req, timeout=30) as resp:
+        html = resp.read().decode("utf-8", errors="replace")
+
+    matches = FILE_DOWN_RE.findall(html)
+    if not matches:
+        raise RuntimeError("다운로드 정보를 찾을 수 없음 (페이지 구조가 다르거나 파일형 데이터가 아님)")
+
+    all_rows = []
+    seen = set()
+    for pk, detail_pk, _atch, file_detail_sn, _hist_sn in matches:
+        if (detail_pk, file_detail_sn) in seen:
+            continue
+        seen.add((detail_pk, file_detail_sn))
+
+        body = urllib.parse.urlencode({
+            "publicDataDetailPk": detail_pk,
+            "publicDataPk":       pk,
+            "atchFileId":         "",
+            "fileDetailSn":       file_detail_sn,
+            "publicDataTyCode":   "PR0051",
+        }).encode("utf-8")
+        req2 = urllib.request.Request(
+            "https://www.data.go.kr/tcs/dss/selectFileDataDownload.do",
+            data=body,
+            headers={
+                "Content-Type":     "application/x-www-form-urlencoded; charset=UTF-8",
+                "X-Requested-With": "XMLHttpRequest",
+                "User-Agent":       "Mozilla/5.0",
+                "Referer":          page_url,
+            },
+        )
+        with urllib.request.urlopen(req2, timeout=30) as resp2:
+            meta = json.loads(resp2.read().decode("utf-8"))
+        atch_file_id = meta.get("atchFileId")
+        if not atch_file_id:
+            continue
+
+        dl_url = "https://www.data.go.kr/cmm/cmm/fileDownload.do?" + urllib.parse.urlencode({
+            "atchFileId":   atch_file_id,
+            "fileDetailSn": file_detail_sn,
+            "dataNm":       "data",
+        })
+        req3 = urllib.request.Request(dl_url, headers={"User-Agent": "Mozilla/5.0"})
+        with urllib.request.urlopen(req3, timeout=30) as resp3:
+            raw = resp3.read()
+
+        if raw[:2] == b"PK":
+            # xlsx/zip - 이 스크립트는 CSV만 지원
+            continue
+
+        for enc in ("utf-8-sig", "cp949", "utf-8"):
+            try:
+                text = raw.decode(enc)
+                break
+            except UnicodeDecodeError:
+                continue
+        else:
+            continue
+
+        all_rows.extend(csv.DictReader(io.StringIO(text)))
+
+    return all_rows
+
+
 # ── CSV URL 직접 다운로드 ─────────────────────────────────────────────────
 
 def fetch_csv_url(url):
@@ -267,11 +356,13 @@ def main():
                 rows = fetch_odcloud(src["dataset_id"], args.key)
             elif src_type == "csv_url":
                 rows = fetch_csv_url(src["url"])
+            elif src_type == "data_go_kr_file":
+                rows = fetch_data_go_kr_file(src["id"])
             else:
                 print(f"알 수 없는 type '{src_type}', 건너뜀")
                 continue
 
-            bins, idx = rows_to_bins(rows, idx)
+            bins, idx = rows_to_bins(rows, idx, default_gu=src.get("region", ""))
             all_bins.extend(bins)
             print(f"{len(bins)}개")
             source_names.append(src_name)
