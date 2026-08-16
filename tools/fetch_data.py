@@ -94,7 +94,7 @@ def valid_coords(lat, lng):
     return lat and lng and (33.0 <= lat <= 38.9) and (124.0 <= lng <= 132.0)
 
 
-def rows_to_bins(rows, start_idx=1, default_gu=""):
+def rows_to_bins(rows, start_idx=1, default_gu="", swap_latlng=False, force_region=False):
     bins = []
     idx  = start_idx
     for row in rows:
@@ -103,6 +103,9 @@ def rows_to_bins(rows, start_idx=1, default_gu=""):
         lng_k = find_col(keys, LNG_KEYS)
         if not lat_k or not lng_k:
             continue
+
+        if swap_latlng:
+            lat_k, lng_k = lng_k, lat_k
 
         lat = parse_float(row.get(lat_k))
         lng = parse_float(row.get(lng_k))
@@ -119,7 +122,11 @@ def rows_to_bins(rows, start_idx=1, default_gu=""):
         gu      = str(row.get(gu_k,   "")).strip() if gu_k   else ""
         dong    = str(row.get(dong_k, "")).strip() if dong_k else ""
 
-        if not gu:
+        if force_region and default_gu:
+            # 일부 지자체 CSV는 '시군구명' 컬럼에 시/군 대신 읍/면 이름이 들어있음
+            dong = dong or gu
+            gu = default_gu
+        elif not gu:
             gu = extract_gu_from_address(address) or default_gu
 
         if not name:
@@ -362,7 +369,9 @@ def main():
                 print(f"알 수 없는 type '{src_type}', 건너뜀")
                 continue
 
-            bins, idx = rows_to_bins(rows, idx, default_gu=src.get("region", ""))
+            bins, idx = rows_to_bins(rows, idx, default_gu=src.get("region", ""),
+                                      swap_latlng=src.get("swap_latlng", False),
+                                      force_region=src.get("force_region", False))
             all_bins.extend(bins)
             print(f"{len(bins)}개")
             source_names.append(src_name)
