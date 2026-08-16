@@ -1,0 +1,23 @@
+{
+  "_readme": [
+    "data.go.kr에서 '의류수거함' 검색 → 원하는 지자체 데이터셋 클릭 → '활용신청' 후 승인",
+    "데이터셋 URL 예시: https://www.data.go.kr/data/15083285/openapi.do  → dataset_id = '15083285'",
+    "API 키는 data.go.kr 마이페이지 > 인증키 발급현황에서 확인 (무료)",
+    "type: 'odcloud' = api.odcloud.kr 표준 REST API (대부분의 지자체 데이터)",
+    "type: 'csv_url' = CSV 파일 직접 다운로드 방식 (API 미지원 데이터셋)"
+  ],
+  "sources": [
+    {
+      "type": "odcloud",
+      "name": "서울 강남구 의류수거함",
+      "dataset_id": "15083285",
+      "note": "예시 ID - data.go.kr에서 실제 데이터셋 ID로 교체하세요"
+    },
+    {
+      "type": "odcloud",
+      "name": "서울 서초구 의류수거함",
+      "dataset_id": "15083286",
+      "note": "예시 ID - 실제 검색 후 교체 필요"
+    }
+  ]
+}
